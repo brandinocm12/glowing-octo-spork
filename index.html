@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quick Menu Builder — Complete Tooltip AHK Export</title>
+<style>
+  body { font-family: Inter,Segoe UI,Arial, sans-serif; background:#f3f4f6; margin:0; color:#111 }
+  header { background:#0b1220; color:#fff; padding:14px 18px }
+  header h1 { margin:0; font-size:18px }
+  .wrap { display:flex; gap:16px; padding:18px }
+  .left { width:420px }
+  .panel { background:#fff; padding:12px; border-radius:8px; box-shadow:0 1px 0 rgba(0,0,0,0.06) }
+  label { display:block; margin-top:8px; color:#555; font-size:13px }
+  input[type=text], input[type=number], select { width:100%; padding:8px; margin-top:6px; border:1px solid #ddd; border-radius:6px }
+  .pages { margin-top:10px; display:flex; flex-direction:column; gap:8px }
+  .page-pill { padding:8px; border:1px solid #eee; border-radius:6px; background:#fafafa; display:flex; gap:8px; align-items:center }
+  .page-pill button { margin-left:auto }
+  .items { margin-top:12px; display:flex; flex-direction:column; gap:8px }
+  .item-row { display:flex; gap:8px; align-items:center }
+  .item-row .label { flex:1; padding:8px; border-radius:6px; border:1px solid #eee; background:#fbfbfb }
+  .item-row .hot { width:180px; padding:8px; border:1px solid #eee; border-radius:6px }
+  .controls { display:flex; gap:8px; margin-top:10px }
+  .preview { flex:1 }
+  pre.box { background:#0b0b0b; color:#eaeaea; padding:12px; border-radius:8px; min-height:240px; overflow:auto; font-family:monospace }
+  button { padding:8px 10px; border-radius:6px; border:none; cursor:pointer; background:#ff8c00; color:#fff }
+  button.ghost { background:#f7f7f8; color:#111; border:1px solid #e6e6e6 }
+  small.note { color:#666; display:block; margin-top:8px }
+  footer { padding:12px 18px; color:#666; font-size:13px }
+</style>
+</head>
+<body>
+<header><h1>Quick Menu Builder — Complete Tooltip AHK Export</h1></header>
+
+<div class="wrap">
+  <div class="left">
+    <div class="panel">
+      <label>Project name</label>
+      <input id="projectName" type="text" value="Quick Menu">
+      <label>Chat delay (ms)</label>
+      <input id="chatDelay" type="number" value="150" min="0">
+      <label>Open hotkey (AHK syntax)</label>
+      <input id="openHotkey" type="text" value="^+q">
+      <label>Up key</label>
+      <input id="keyUp" type="text" value="z">
+      <label>Down key</label>
+      <input id="keyDown" type="text" value="x">
+      <label>Select key</label>
+      <input id="keySelect" type="text" value="v">
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="loadPreset">Load Premade</button>
+        <button id="startBlank" class="ghost">Start Blank</button>
+      </div>
+      <small class="note">Click a page to select it. Edit item labels inline. Hotkey field accepts AHK strings or CHAT:msg or NEXT/PREV.</small>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="newPageName" type="text" placeholder="New page title (e.g. RBLX CHAT)">
+        <button id="addPage">Add Page</button>
+      </div>
+      <div class="pages" id="pagesList"></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h3>Items (selected page)</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="itemType"><option value="CHAT">Chat</option><option value="HOTKEY">Hotkey</option><option value="NEXT">Next Page</option><option value="PREV">Prev Page</option></select>
+        <input id="itemLabel" type="text" placeholder="Label shown in menu (eg: say gg)">
+        <input id="itemAction" type="text" placeholder="Action (CHAT:gg or ^+b or NEXT/PREV)">
+        <button id="addItem">Add Item</button>
+      </div>
+      <div class="items" id="itemsList"></div>
+      <div class="controls">
+        <button id="exportBtn">Export .ahk</button>
+        <button id="downloadZip" class="ghost">Download .zip</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview panel">
+    <h3>Preview</h3>
+    <pre id="preview" class="box"></pre>
+    <h3 style="margin-top:12px">Generated AHK</h3>
+    <pre id="generated" class="box"></pre>
+  </div>
+</div>
+
+<footer>Open index.html locally. The exported script is ready for AutoHotkey v1.1+. Map controller inputs externally if needed.</footer>
+
+<script>
+// State
+let Pages = [];
+let currentPage = -1;
+
+function makePage(title){ return { Title: title, Items: [], Hotkeys: [] }; }
+
+// UI helpers
+function refreshPages(){
+  const list = document.getElementById('pagesList'); list.innerHTML='';
+  Pages.forEach((p,i)=>{
+    const el = document.createElement('div'); el.className='page-pill';
+    el.textContent = (i+1) + '. ' + p.Title;
+    el.onclick = ()=> selectPage(i);
+    const del = document.createElement('button'); del.textContent='Del'; del.className='ghost';
+    del.onclick = (e)=>{ e.stopPropagation(); if(confirm('Delete page \"'+p.Title+'\"?')){ Pages.splice(i,1); if(currentPage===i) currentPage=-1; refreshPages(); renderItems(); renderPreview(); } };
+    el.appendChild(del);
+    list.appendChild(el);
+  });
+  // highlight selected
+  const pills = document.querySelectorAll('.page-pill');
+  pills.forEach((pill, idx)=> pill.style.background = (idx===currentPage? '#fff6ea' : '#fafafa'));
+}
+
+function selectPage(i){
+  currentPage = i;
+  document.getElementById('newPageName').value='';
+  document.getElementById('itemLabel').value=''; document.getElementById('itemAction').value='';
+  document.getElementById('itemType').value='CHAT';
+  document.getElementById('itemLabel').focus();
+  renderItems(); renderPreview(); refreshPages();
+}
+
+function renderItems(){
+  const container = document.getElementById('itemsList'); container.innerHTML='';
+  if(currentPage<0 || !Pages[currentPage]) { container.textContent='No page selected'; return; }
+  const page = Pages[currentPage];
+  page.Items.forEach((label, idx)=>{
+    const row = document.createElement('div'); row.className='item-row';
+    const lbl = document.createElement('div'); lbl.className='label'; lbl.contentEditable=true; lbl.textContent = label;
+    lbl.oninput = ()=> { page.Items[idx] = lbl.textContent; renderPreview(); };
+    const hot = document.createElement('input'); hot.className='hot'; hot.value = page.Hotkeys[idx] || '';
+    hot.oninput = ()=> { page.Hotkeys[idx] = hot.value; };
+    const up = document.createElement('button'); up.textContent='↑'; up.onclick = ()=> { if(idx>0){ swapIdx(page, idx, idx-1); renderItems(); renderPreview(); } };
+    const down = document.createElement('button'); down.textContent='↓'; down.onclick = ()=> { if(idx<page.Items.length-1){ swapIdx(page, idx, idx+1); renderItems(); renderPreview(); } };
+    const del = document.createElement('button'); del.textContent='Del'; del.onclick = ()=> { page.Items.splice(idx,1); page.Hotkeys.splice(idx,1); renderItems(); renderPreview(); };
+    row.appendChild(lbl); row.appendChild(hot); row.appendChild(up); row.appendChild(down); row.appendChild(del);
+    container.appendChild(row);
+  });
+  if(page.Items.length===0) container.textContent='No items yet.';
+}
+
+function swapIdx(page, a, b){ [page.Items[a], page.Items[b]] = [page.Items[b], page.Items[a]]; [page.Hotkeys[a], page.Hotkeys[b]] = [page.Hotkeys[b], page.Hotkeys[a]]; }
+
+function renderPreview(){
+  const preview = document.getElementById('preview');
+  if(currentPage<0 || !Pages[currentPage]) { preview.textContent='No page selected'; return; }
+  const p = Pages[currentPage]; let out = 'Quick Menu - ' + p.Title + '\\n\\n';
+  p.Items.forEach((it, i)=>{ out += (i===0?'> ':'  ') + it + '\\n'; });
+  preview.textContent = out;
+}
+
+// Actions
+document.getElementById('addPage').onclick = ()=> {
+  const name = document.getElementById('newPageName').value.trim() || prompt('New page title:','New Page');
+  if(!name) return;
+  Pages.push(makePage(name));
+  refreshPages(); selectPage(Pages.length-1);
+};
+
+document.getElementById('addItem').onclick = ()=> {
+  if(currentPage<0){ alert('Select a page first'); return; }
+  const type = document.getElementById('itemType').value;
+  const label = document.getElementById('itemLabel').value.trim() || (type==='CHAT'?'Chat message':'New Item');
+  let action = document.getElementById('itemAction').value.trim();
+  if(type==='CHAT' && !action.startsWith('CHAT:')) action = 'CHAT:' + (action || 'hello');
+  if(type==='NEXT') action = 'NEXT';
+  if(type==='PREV') action = 'PREV';
+  Pages[currentPage].Items.push(label); Pages[currentPage].Hotkeys.push(action);
+  document.getElementById('itemLabel').value=''; document.getElementById('itemAction').value='';
+  renderItems(); renderPreview();
+};
+
+document.getElementById('loadPreset').onclick = ()=> {
+  Pages = [];
+  const p1 = makePage('RBLX CHAT'); p1.Items = ['say gg','say lol','say someone\\'s mad','say nice','say ok','Next Page →']; p1.Hotkeys = ['CHAT:gg','CHAT:lol','CHAT:someone\\'s mad','CHAT:nice','CHAT:ok','NEXT']; Pages.push(p1);
+  const p2 = makePage('RIVALS ACTIONS'); p2.Items = ['Free cam (Shift+P)','Next Page →','← Previous Page']; p2.Hotkeys = ['+p','NEXT','PREV']; Pages.push(p2);
+  const p3 = makePage('BLOXSTRAP'); p3.Items = ['toggle 3D guis (Ctrl+Shift+B)','toggle game screen guis (Ctrl+Shift+C)','toggle Roblox guys (Ctrl+Shift+G)','toggle player names (Ctrl+Shift+N)','← Previous Page']; p3.Hotkeys = ['^+b','^+c','^+g','^+n','PREV']; Pages.push(p3);
+  refreshPages(); selectPage(0);
+};
+
+document.getElementById('startBlank').onclick = ()=> { Pages = []; refreshPages(); currentPage=-1; renderPreview(); document.getElementById('newPageName').focus(); };
+
+document.getElementById('exportBtn').onclick = ()=> {
+  const chatDelay = parseInt(document.getElementById('chatDelay').value||150,10);
+  const openHotkey = document.getElementById('openHotkey').value || '^+q';
+  const keyUp = document.getElementById('keyUp').value || 'z';
+  const keyDown = document.getElementById('keyDown').value || 'x';
+  const keySelect = document.getElementById('keySelect').value || 'v';
+
+  let s = '';
+  s += '#Persistent\\n#SingleInstance Force\\n#InstallKeybdHook\\nSetKeyDelay, 10, 10\\n\\n';
+  s += '; ---------------------------\\n; Settings\\n; ---------------------------\\n';
+  s += 'ChatDelay := ' + chatDelay + '   ; delay in ms between chat steps (adjust if needed)\\n\\n';
+  s += '; ---------------------------\\n; Quick Menu Pages\\n; ---------------------------\\n';
+  s += 'Pages := []\\n\\n';
+
+  Pages.forEach((p,pi)=>{
+    s += '; Page ' + (pi+1) + ' - ' + p.Title + '\\n';
+    s += 'page' + (pi+1) + ' := {Title: "' + p.Title.replace(/"/g,'""') + '", Items: [';
+    s += p.Items.map(it=> '"' + it.replace(/"/g,'""') + '"').join(', ');
+    s += ']}\\n';
+    s += 'page' + (pi+1) + '.Hotkeys := [' + p.Hotkeys.map(h=> '"' + h.replace(/"/g,'""') + '"').join(', ') + ']\\n';
+    s += 'Pages.Push(page' + (pi+1) + ')\\n\\n';
+  });
+
+  s += '; ---------------------------\\n; State\\n; ---------------------------\\n';
+  s += 'CurrentPage := 1\\nCurrentItem := 1\\nMenuOpen := false\\n\\n';
+  s += '; ---------------------------\\n; Toggle Quick Menu (' + openHotkey + ')\\n; ---------------------------\\n';
+  s += openHotkey + '::\\n    if (MenuOpen) {\\n        ToolTip\\n        MenuOpen := false\\n    } else {\\n        CurrentPage := 1\\n        CurrentItem := 1\\n        ShowMenu()\\n        MenuOpen := true\\n    }\\nreturn\\n\\n';
+
+  s += '; ---------------------------\\n; Show Tooltip Menu\\n; ---------------------------\\n';
+  s += 'ShowMenu() {\\n    global Pages, CurrentPage, CurrentItem\\n    page := Pages[CurrentPage]\\n    text := "Quick Menu - " page.Title "` + "`\\n` + `\\n"` + '\\n    Loop % page.Items.Length() {\\n        idx := A_Index\\n        if (idx = CurrentItem)\\n            text .= "> " . page.Items[idx] . " <` + "`\\n` + `"\\n        else\\n            text .= "  " . page.Items[idx] . "` + "`\\n` + `"\\n    }\\n    ToolTip, %text%\\n}\\n\\n';
+
+  s += '; ---------------------------\\n; Navigation Hotkeys\\n; ---------------------------\\n';
+  s += '~' + keyUp + '::\\n    if (MenuOpen) {\\n        CurrentItem--\\n        if (CurrentItem < 1)\\n            CurrentItem := Pages[CurrentPage].Items.Length()\\n        ShowMenu()\\n        return\\n    }\\nreturn\\n\\n';
+  s += '~' + keyDown + '::\\n    if (MenuOpen) {\\n        CurrentItem++\\n        if (CurrentItem > Pages[CurrentPage].Items.Length())\\n            CurrentItem := 1\\n        ShowMenu()\\n        return\\n    }\\nreturn\\n\\n';
+  s += '~' + keySelect + '::\\n    if (MenuOpen) {\\n        hk := Pages[CurrentPage].Hotkeys[CurrentItem]\\n        if (hk = "NEXT") {\\n            CurrentPage++\\n            if (CurrentPage > Pages.Length())\\n                CurrentPage := 1\\n            CurrentItem := 1\\n            ShowMenu()\\n        } else if (hk = "PREV") {\\n            CurrentPage--\\n            if (CurrentPage < 1)\\n                CurrentPage := Pages.Length()\\n            CurrentItem := 1\\n            ShowMenu()\\n        } else if (SubStr(hk, 1, 5) = "CHAT:") {\\n            msg := SubStr(hk, 6)\\n            SendInput, /\\n            Sleep, %ChatDelay%    ; wait for chat box\\n            SendInput, %msg%\\n            Sleep, %ChatDelay%    ; wait so Roblox registers text\\n            SendInput, {Enter}\\n        } else {\\n            SendInput, %hk%\\n        }\\n        return\\n    }\\nreturn\\n\\n';
+
+  document.getElementById('generated').textContent = s;
+};
+
+document.getElementById('downloadZip').onclick = ()=>{
+  const content = document.getElementById('generated').textContent || '';
+  if(!content){ alert('Generate script first (Export .ahk)'); return; }
+  // create zip client-side
+  const zip = new JSZip();
+  zip.file('quick_menu_export.ahk', content);
+  zip.file('README.txt', 'Generated by Quick Menu Builder');
+  zip.generateAsync({type:'blob'}).then(function(contentBlob){
+    const url = URL.createObjectURL(contentBlob);
+    const a = document.createElement('a'); a.href = url; a.download = 'quick_menu_export.zip'; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },3000);
+  });
+};
+
+// include JSZip
+(function(){ var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js'; document.head.appendChild(s); })();
+
+// auto-load premade at startup
+document.getElementById('loadPreset')?.click?.();
+</script>
+</body>
+</html>
